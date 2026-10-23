@@ -1,6 +1,7 @@
 
 import { useRef, useState } from "react";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { supabase } from "./services/supabase";
 import "./App.css";
 
 export default function ProntuarioMedApp() {
@@ -8,7 +9,51 @@ export default function ProntuarioMedApp() {
   const [nomeReceita, setNomeReceita] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [carregando, setCarregando] = useState(false);
+  const [urlPublica, setUrlPublica] = useState("");
   const arquivoRef = useRef(null);
+
+  async function enviarImagemParaStorage(dataUrl, nomeArquivo) {
+    setReceita(dataUrl);
+    setNomeReceita(nomeArquivo);
+    setUrlPublica("");
+    setCarregando(true);
+    setMensagem("Enviando imagem para o Supabase Storage...");
+
+    try {
+      const resposta = await fetch(dataUrl);
+      const blob = await resposta.blob();
+
+      const extensao = blob.type.split("/")[1] || "jpeg";
+      const caminho = `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}.${extensao}`;
+
+      const { data, error } = await supabase.storage
+        .from("fotos-camera")
+        .upload(caminho, blob, {
+          contentType: blob.type || "image/jpeg",
+          upsert: false,
+        });
+
+      if (error) throw error;
+
+      const { data: publicacao } = supabase.storage
+        .from("fotos-camera")
+        .getPublicUrl(data.path);
+
+      setUrlPublica(publicacao.publicUrl);
+      setMensagem("Imagem enviada com sucesso para o Supabase Storage!");
+    } catch (erro) {
+      console.error("Erro no upload:", erro);
+      setMensagem(
+        `A imagem foi aberta, mas o upload falhou: ${
+          erro.message || "verifique a configuração do Supabase."
+        }`
+      );
+    } finally {
+      setCarregando(false);
+    }
+  }
 
   async function digitalizarReceita() {
     setCarregando(true);
@@ -26,15 +71,19 @@ export default function ProntuarioMedApp() {
         throw new Error("Não foi possível obter a imagem.");
       }
 
-      setReceita(
-        `data:image/${foto.format || "jpeg"};base64,${foto.base64String}`
+      const dataUrl = `data:image/${foto.format || "jpeg"};base64,${foto.base64String}`;
+
+      await enviarImagemParaStorage(
+        dataUrl,
+        "Receita capturada pela câmera"
       );
-      setNomeReceita("Receita capturada pela câmera");
-      setMensagem("Sua receita foi digitalizada com sucesso.");
     } catch (erro) {
       console.warn("Captura cancelada ou indisponível:", erro);
-      setMensagem("A captura foi cancelada ou não pôde ser concluída.");
-    } finally {
+      setMensagem(
+        erro.message === "Não foi possível obter a imagem."
+          ? erro.message
+          : "A captura foi cancelada ou não pôde ser concluída."
+      );
       setCarregando(false);
     }
   }
@@ -51,10 +100,10 @@ export default function ProntuarioMedApp() {
 
     const leitor = new FileReader();
 
-    leitor.onload = () => {
-      setReceita(leitor.result);
-      setNomeReceita(arquivo.name);
-      setMensagem("Imagem importada com sucesso.");
+    leitor.onload = async () => {
+      if (typeof leitor.result === "string") {
+        await enviarImagemParaStorage(leitor.result, arquivo.name);
+      }
     };
 
     leitor.onerror = () => {
@@ -76,9 +125,21 @@ export default function ProntuarioMedApp() {
     }
   }
 
+  async function copiarUrlPublica() {
+    if (!urlPublica) return;
+
+    try {
+      await navigator.clipboard.writeText(urlPublica);
+      setMensagem("URL pública copiada!");
+    } catch {
+      setMensagem("Não foi possível copiar o link neste navegador.");
+    }
+  }
+
   function removerReceita() {
     setReceita("");
     setNomeReceita("");
+    setUrlPublica("");
     setMensagem("");
   }
 
@@ -87,7 +148,9 @@ export default function ProntuarioMedApp() {
       <header className="topbar">
         <a className="brand" href="#inicio" aria-label="ProntuárioMed, início">
           <span className="brand-symbol">p.</span>
-          <span>prontuário<span className="brand-light">med</span></span>
+          <span>
+            prontuário<span className="brand-light">med</span>
+          </span>
         </a>
 
         <span className="topbar-note">SEU CUIDADO, BEM GUARDADO</span>
@@ -126,7 +189,12 @@ export default function ProntuarioMedApp() {
         </div>
 
         <div className="hero-art" aria-label="Ilustração de uma receita médica">
-          <div className="art-stamp">SAÚDE<br />COM CUIDADO</div>
+          <div className="art-stamp">
+            SAÚDE
+            <br />
+            COM CUIDADO
+          </div>
+
           <div className="paper-sheet">
             <div className="paper-topline">
               <span className="paper-cross">✳</span>
@@ -134,7 +202,11 @@ export default function ProntuarioMedApp() {
             </div>
             <div className="paper-rule" />
             <span className="paper-kicker">DOCUMENTO DIGITAL</span>
-            <h2>Receita<br /><em>médica</em></h2>
+            <h2>
+              Receita
+              <br />
+              <em>médica</em>
+            </h2>
             <div className="paper-lines">
               <span />
               <span />
@@ -146,7 +218,10 @@ export default function ProntuarioMedApp() {
               <span>01 / 01</span>
             </div>
           </div>
-          <div className="art-caption">CUIDADO EM CADA DETALHE — 01</div>
+
+          <div className="art-caption">
+            CUIDADO EM CADA DETALHE — 01
+          </div>
         </div>
       </section>
 
@@ -160,14 +235,18 @@ export default function ProntuarioMedApp() {
         <div className="section-heading">
           <div>
             <span className="eyebrow">SEU ESPAÇO DE REGISTRO</span>
-            <h2>Vamos guardar sua <em>receita?</em></h2>
+            <h2>
+              Vamos guardar sua <em>receita?</em>
+            </h2>
           </div>
           <span className="section-number">01 / 02</span>
         </div>
 
         <div className="workspace-grid">
           <article className="upload-card">
-            <div className="card-index">ETAPA 01 <span>CAPTURA</span></div>
+            <div className="card-index">
+              ETAPA 01 <span>CAPTURA</span>
+            </div>
 
             <div className="upload-icon">
               <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
@@ -189,13 +268,16 @@ export default function ProntuarioMedApp() {
               onClick={digitalizarReceita}
               disabled={carregando}
             >
-              <span>{carregando ? "Abrindo câmera..." : "Abrir câmera"}</span>
+              <span>
+                {carregando ? "Processando imagem..." : "Abrir câmera"}
+              </span>
               <span>↗</span>
             </button>
 
             <button
               className="secondary-button full-button"
               onClick={() => arquivoRef.current?.click()}
+              disabled={carregando}
             >
               Importar uma imagem <span>＋</span>
             </button>
@@ -210,34 +292,75 @@ export default function ProntuarioMedApp() {
 
             <div className="privacy-note">
               <span>✳</span>
-              <p>Use imagens de teste. Evite dados médicos pessoais ao demonstrar o projeto.</p>
+              <p>
+                Use imagens de teste. Evite dados médicos pessoais ao
+                demonstrar o projeto.
+              </p>
             </div>
           </article>
 
           <article className="preview-card">
-            <div className="card-index">ETAPA 02 <span>PRÉVIA DO DOCUMENTO</span></div>
+            <div className="card-index">
+              ETAPA 02 <span>PRÉVIA DO DOCUMENTO</span>
+            </div>
 
             {receita ? (
               <>
                 <div className="receipt-preview">
                   <img src={receita} alt="Prévia da receita digitalizada" />
                 </div>
+
                 <div className="file-details">
                   <span className="file-icon">↗</span>
                   <div className="file-name">
                     <strong>{nomeReceita}</strong>
-                    <span>Imagem pronta para conversão em Base64</span>
+                    <span>Imagem preparada para envio ao Storage</span>
                   </div>
-                  <span className="file-status">● PRONTA</span>
+                  <span className="file-status">
+                    ● {urlPublica ? "NA NUVEM" : carregando ? "ENVIANDO" : "PRONTA"}
+                  </span>
                 </div>
+
                 <div className="preview-actions">
-                  <button className="primary-button" onClick={copiarBase64}>
+                  <button
+                    className="primary-button"
+                    onClick={copiarBase64}
+                    disabled={carregando}
+                  >
                     Copiar Base64 <span>↗</span>
                   </button>
-                  <button className="text-button" onClick={removerReceita}>
+                  <button
+                    className="text-button"
+                    onClick={removerReceita}
+                    disabled={carregando}
+                  >
                     Remover imagem
                   </button>
                 </div>
+
+                {urlPublica && (
+                  <div className="public-url-card">
+                    <h3>Imagem salva na nuvem</h3>
+                    <img
+                      src={urlPublica}
+                      alt="Imagem carregada do Supabase Storage"
+                      className="cloud-preview"
+                    />
+                    <a
+                      href={urlPublica}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Abrir imagem pública ↗
+                    </a>
+                    <button
+                      className="secondary-button full-button"
+                      onClick={copiarUrlPublica}
+                    >
+                      Copiar URL pública
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               <div className="empty-preview">
@@ -249,8 +372,13 @@ export default function ProntuarioMedApp() {
                   <span className="empty-flower">✳</span>
                 </div>
                 <h3>Sua receita aparecerá aqui.</h3>
-                <p>Quando você capturar ou importar uma imagem, poderá visualizar o documento nesta área.</p>
-                <span className="empty-caption">AGUARDANDO DOCUMENTO</span>
+                <p>
+                  Quando você capturar ou importar uma imagem, poderá
+                  visualizar o documento nesta área.
+                </p>
+                <span className="empty-caption">
+                  AGUARDANDO DOCUMENTO
+                </span>
               </div>
             )}
           </article>
@@ -266,14 +394,16 @@ export default function ProntuarioMedApp() {
           <div className="data-card-heading">
             <div>
               <span className="eyebrow">BASTIDORES DO PROJETO</span>
-              <h3>O documento em <em>Base64.</em></h3>
+              <h3>
+                O documento em <em>Base64.</em>
+              </h3>
             </div>
             <span className="code-badge">DATA URL</span>
           </div>
 
           <p className="data-description">
-            A imagem é representada por uma sequência de texto que pode ser
-            preparada para compor uma requisição HTTP.
+            A imagem é representada por uma sequência de texto e convertida
+            em arquivo para ser enviada ao Supabase Storage.
           </p>
 
           <div className="code-preview">
@@ -286,31 +416,50 @@ export default function ProntuarioMedApp() {
           </div>
 
           <div className="data-footer">
-            <span><span className="mini-check">✓</span> {receita ? "Imagem convertida" : "Aguardando imagem"}</span>
-            <span>{receita ? `${Math.round((receita.length * 3) / 4).toLocaleString("pt-BR")} caracteres aprox.` : "Nenhum dado disponível"}</span>
+            <span>
+              <span className="mini-check">✓</span>{" "}
+              {receita ? "Imagem convertida" : "Aguardando imagem"}
+            </span>
+            <span>
+              {receita
+                ? `${Math.round(
+                    (receita.length * 3) / 4
+                  ).toLocaleString("pt-BR")} caracteres aprox.`
+                : "Nenhum dado disponível"}
+            </span>
           </div>
         </article>
       </section>
 
       <section className="closing-note">
         <span className="closing-flower">✳</span>
-        <p>Pequenos cuidados fazem parte de uma vida mais organizada.</p>
+        <p>
+          Pequenos cuidados fazem parte de uma vida mais organizada.
+        </p>
         <span>PRONTUÁRIOMED · PDM II</span>
       </section>
 
       <footer className="footer">
         <a className="brand footer-brand" href="#inicio">
           <span className="brand-symbol">p.</span>
-          <span>prontuário<span className="brand-light">med</span></span>
+          <span>
+            prontuário<span className="brand-light">med</span>
+          </span>
         </a>
         <span>PROJETO ACADÊMICO · ALUNO 03</span>
         <a href="#inicio">Voltar ao início ↑</a>
       </footer>
 
       <nav className="mobile-nav" aria-label="Navegação principal">
-        <a href="#inicio"><span>⌂</span> Início</a>
-        <a href="#digitalizar"><span>＋</span> Digitalizar</a>
-        <a href="#digitalizar"><span>▤</span> Receita</a>
+        <a href="#inicio">
+          <span>⌂</span> Início
+        </a>
+        <a href="#digitalizar">
+          <span>＋</span> Digitalizar
+        </a>
+        <a href="#digitalizar">
+          <span>▤</span> Receita
+        </a>
       </nav>
     </main>
   );
